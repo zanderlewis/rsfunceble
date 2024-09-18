@@ -3,9 +3,10 @@ extern crate reqwest;
 extern crate tokio;
 extern crate trust_dns_resolver;
 extern crate whois_rust;
+extern crate url;
 
 use clap::Parser;
-use reqwest::get;
+use reqwest::Client;
 use tokio::task;
 use trust_dns_resolver::TokioAsyncResolver;
 use whois_rust::{WhoIs, WhoIsLookupOptions};
@@ -13,11 +14,12 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 use std::fs::{OpenOptions, remove_file};
 use std::io::Write;
+use url::Url;
 
 /// CLI Arguments definition using Clap
 #[derive(Parser)]
 struct Args {
-    /// Input file containing the list of domains to check
+    /// Input file containing the list of domains or URLs to check
     #[arg(short, long)]
     input_file: String,
 
@@ -51,25 +53,30 @@ async fn check_dns(domain: &str, verbose: bool) -> Result<(), String> {
     result
 }
 
-/// Check HTTP Status
-async fn check_http(domain: &str, verbose: bool) -> Result<(), String> {
-    let url = format!("http://{}", domain);
-    let result = get(&url).await
-        .map_err(|_| "HTTP Status Failed".to_string())
-        .and_then(|response| {
-            if response.status().is_success() {
-                Ok(())
-            } else {
-                Err("HTTP Status Failed".to_string())
-            }
-        });
+/// Check HTTP Status with support for redirects
+async fn check_http(url: &str, verbose: bool) -> Result<(bool, bool), String> {
+    let client = Client::builder()
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .build()
+        .map_err(|_| "HTTP Client Creation Failed".to_string())?;
+    
+    let response = client.get(url).send().await.map_err(|_| "HTTP Status Failed".to_string())?;
+    let final_url = response.url().clone();
+    let is_success = response.status().is_success();
+    let redirected_to_www = final_url.host_str().map_or(false, |host| host.starts_with("www."));
+    
     if verbose {
-        match &result {
-            Ok(_) => println!("HTTP check for {} succeeded", domain),
-            Err(_) => println!("HTTP check for {} failed", domain),
+        if is_success {
+            println!("HTTP check for {} succeeded", url);
+        } else {
+            println!("HTTP check for {} failed", url);
+        }
+        if redirected_to_www {
+            println!("Redirected to www: {}", final_url);
         }
     }
-    result
+    
+    Ok((is_success, redirected_to_www))
 }
 
 /// WHOIS Lookup
@@ -94,21 +101,36 @@ async fn check_whois(domain: &str, verbose: bool) -> Result<(), String> {
     result
 }
 
-/// Main logic for checking a single domain
-async fn check_domain(domain: String, semaphore: Arc<Semaphore>, output_file: String, exclude: String, verbose: bool) {
+/// Main logic for checking a single domain or URL
+async fn check_domain_or_url(input: String, semaphore: Arc<Semaphore>, output_file: String, exclude: String, verbose: bool) {
     let permit = semaphore.acquire().await.unwrap();
     
     if verbose {
-        println!("Checking: {}", domain);
+        println!("Checking: {}", input);
     }
-    
-    let dns_result = check_dns(&domain, verbose).await;
-    let http_result = check_http(&domain, verbose).await;
 
-    let status = if http_result.is_ok() {
+    let (url, domain) = if let Ok(parsed_url) = Url::parse(&input) {
+        (input.clone(), parsed_url.host_str().map(|s| s.to_string()))
+    } else {
+        (format!("http://{}", input), Some(input.clone()))
+    };
+
+    let dns_result = if let Some(domain) = &domain {
+        check_dns(domain, verbose).await
+    } else {
+        Ok(())
+    };
+
+    let (http_success, redirected_to_www) = check_http(&url, verbose).await.unwrap_or((false, false));
+
+    let status = if http_success || redirected_to_www {
         "ACTIVE"
     } else {
-        let whois_result = check_whois(&domain, verbose).await;
+        let whois_result = if let Some(domain) = &domain {
+            check_whois(domain, verbose).await
+        } else {
+            Ok(())
+        };
         if dns_result.is_ok() && whois_result.is_ok() {
             "ACTIVE"
         } else {
@@ -119,12 +141,12 @@ async fn check_domain(domain: String, semaphore: Arc<Semaphore>, output_file: St
     if status != exclude {
         let file_path = format!("{}_{}.txt", output_file, status);
         let mut file = OpenOptions::new().append(true).create(true).open(&file_path).unwrap();
-        writeln!(file, "{}", domain).unwrap();
+        writeln!(file, "{}", input).unwrap();
     }
 
     if verbose {
-        println!("{}: {}", domain, status);
-        println!("Finished checking: {}", domain);
+        println!("{}: {}", input, status);
+        println!("Finished checking: {}", input);
     }
     
     drop(permit); // Release semaphore permit
@@ -155,7 +177,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // Read input file
     let contents = std::fs::read_to_string(args.input_file)?;
-    let domains: Vec<String> = contents.lines().map(|s| s.to_string()).collect();
+    let inputs: Vec<String> = contents.lines().map(|s| s.to_string()).collect();
     
     // Set concurrency limit
     let semaphore = Arc::new(Semaphore::new(args.concurrency));
@@ -163,13 +185,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Run checks concurrently
     let mut handles = vec![];
     
-    for domain in domains {
+    for input in inputs {
         let sem_clone = semaphore.clone();
         let output_file = args.output_file.clone();
         let exclude = args.exclude.clone();
         let verbose = args.verbose;
         let handle = task::spawn(async move {
-            check_domain(domain, sem_clone, output_file, exclude, verbose).await;
+            check_domain_or_url(input, sem_clone, output_file, exclude, verbose).await;
         });
         handles.push(handle);
     }

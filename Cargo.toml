@@ -1,6 +1,6 @@
 [package]
 name = "rsfunceble"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2021"
 authors = ["Zander Lewis <zander@zanderlewis.dev>"]
 description = "PyFunceble rewritten in Rust with concurrency and speed in mind."
@@ -15,3 +15,4 @@ reqwest = { version = "0.11", features = ["blocking", "json"] }
 trust-dns-resolver = "0.20"
 whois-rust = "1.6.0"
 clap = { version = "4.0", features = ["derive"] }
+url = "2.5.2"
