@@ -8,7 +8,6 @@ license = "MIT"
 repository = "https://github.com/zanderlewis/rsfunceble"
 readme = "README.md"
 keywords = ["funceble", "rsfunceble", "concurrency", "speed", "lookup"]
-categories = ["networking", "internet", "cli"]
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
