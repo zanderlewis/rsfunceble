@@ -2,6 +2,13 @@
 name = "rsfunceble"
 version = "0.0.1"
 edition = "2021"
+authors = ["Zander Lewis <zander@zanderlewis.dev>"]
+description = "PyFunceble rewritten in Rust with concurrency and speed in mind."
+license = "MIT"
+repository = "https://github.com/zanderlewis/rsfunceble"
+readme = "README.md"
+keywords = ["funceble", "rsfunceble", "rust", "concurrency", "speed", "whois", "whois-rust", "trust-dns-resolver", "reqwest", "tokio", "clap"]
+categories = ["networking", "internet", "cli"]
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
