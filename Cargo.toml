@@ -7,7 +7,7 @@ description = "PyFunceble rewritten in Rust with concurrency and speed in mind."
 license = "MIT"
 repository = "https://github.com/zanderlewis/rsfunceble"
 readme = "README.md"
-keywords = ["funceble", "rsfunceble", "rust", "concurrency", "speed", "whois", "whois-rust", "trust-dns-resolver", "reqwest", "tokio", "clap"]
+keywords = ["funceble", "rsfunceble", "concurrency", "speed", "lookup"]
 categories = ["networking", "internet", "cli"]
 
 [dependencies]
