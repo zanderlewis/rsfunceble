@@ -32,18 +32,29 @@ struct Args {
     /// Number of concurrent tasks
     #[arg(short, long, default_value_t = 10)]
     concurrency: usize,
+
+    /// Verbose output
+    #[arg(short, long)]
+    verbose: bool,
 }
 
 /// Check DNS resolution
-async fn check_dns(domain: &str) -> Result<(), String> {
+async fn check_dns(domain: &str, verbose: bool) -> Result<(), String> {
     let resolver = TokioAsyncResolver::tokio_from_system_conf().map_err(|e| e.to_string())?;
-    resolver.lookup_ip(domain).await.map(|_| ()).map_err(|_| "DNS Lookup Failed".to_string())
+    let result = resolver.lookup_ip(domain).await.map(|_| ()).map_err(|_| "DNS Lookup Failed".to_string());
+    if verbose {
+        match &result {
+            Ok(_) => println!("DNS Lookup for {} succeeded", domain),
+            Err(_) => println!("DNS Lookup for {} failed", domain),
+        }
+    }
+    result
 }
 
 /// Check HTTP Status
-async fn check_http(domain: &str) -> Result<(), String> {
+async fn check_http(domain: &str, verbose: bool) -> Result<(), String> {
     let url = format!("http://{}", domain);
-    get(&url).await
+    let result = get(&url).await
         .map_err(|_| "HTTP Status Failed".to_string())
         .and_then(|response| {
             if response.status().is_success() {
@@ -51,14 +62,21 @@ async fn check_http(domain: &str) -> Result<(), String> {
             } else {
                 Err("HTTP Status Failed".to_string())
             }
-        })
+        });
+    if verbose {
+        match &result {
+            Ok(_) => println!("HTTP check for {} succeeded", domain),
+            Err(_) => println!("HTTP check for {} failed", domain),
+        }
+    }
+    result
 }
 
 /// WHOIS Lookup
-async fn check_whois(domain: &str) -> Result<(), String> {
+async fn check_whois(domain: &str, verbose: bool) -> Result<(), String> {
     let whois_client = WhoIs::from_string(domain).map_err(|e| e.to_string())?;
     let options = WhoIsLookupOptions::from_string(domain).map_err(|e| e.to_string())?;
-    whois_client.lookup(options)
+    let result = whois_client.lookup(options)
         .map_err(|e| e.to_string())
         .and_then(|result| {
             if !result.is_empty() {
@@ -66,22 +84,31 @@ async fn check_whois(domain: &str) -> Result<(), String> {
             } else {
                 Err("WHOIS Lookup Failed".to_string())
             }
-        })
+        });
+    if verbose {
+        match &result {
+            Ok(_) => println!("WHOIS Lookup for {} succeeded", domain),
+            Err(_) => println!("WHOIS Lookup for {} failed: {}", domain, result.as_ref().err().unwrap()),
+        }
+    }
+    result
 }
 
 /// Main logic for checking a single domain
-async fn check_domain(domain: String, semaphore: Arc<Semaphore>, output_file: String, exclude: String) {
+async fn check_domain(domain: String, semaphore: Arc<Semaphore>, output_file: String, exclude: String, verbose: bool) {
     let permit = semaphore.acquire().await.unwrap();
     
-    println!("Checking: {}", domain);
+    if verbose {
+        println!("Checking: {}", domain);
+    }
     
-    let dns_result = check_dns(&domain).await;
-    let http_result = check_http(&domain).await;
+    let dns_result = check_dns(&domain, verbose).await;
+    let http_result = check_http(&domain, verbose).await;
 
     let status = if http_result.is_ok() {
         "ACTIVE"
     } else {
-        let whois_result = check_whois(&domain).await;
+        let whois_result = check_whois(&domain, verbose).await;
         if dns_result.is_ok() && whois_result.is_ok() {
             "ACTIVE"
         } else {
@@ -95,10 +122,12 @@ async fn check_domain(domain: String, semaphore: Arc<Semaphore>, output_file: St
         writeln!(file, "{}", domain).unwrap();
     }
 
-    println!("{}: {}", domain, status);
+    if verbose {
+        println!("{}: {}", domain, status);
+        println!("Finished checking: {}", domain);
+    }
     
     drop(permit); // Release semaphore permit
-    println!("Finished checking: {}", domain);
 }
 
 /// Delete output files if they exist
@@ -138,8 +167,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let sem_clone = semaphore.clone();
         let output_file = args.output_file.clone();
         let exclude = args.exclude.clone();
+        let verbose = args.verbose;
         let handle = task::spawn(async move {
-            check_domain(domain, sem_clone, output_file, exclude).await;
+            check_domain(domain, sem_clone, output_file, exclude, verbose).await;
         });
         handles.push(handle);
     }
@@ -151,6 +181,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    println!("All tasks completed.");
+    if args.verbose {
+        println!("All tasks completed.");
+    }
     Ok(())
 }
