@@ -60,8 +60,9 @@ async fn check_domain_or_url(input: String, semaphore: Arc<Semaphore>, output_fi
     let status = if http_success || redirected_to_www {
         "ACTIVE"
     } else {
-        let dns_result = if let Some(domain) = &domain {
-            dns::check_dns(domain, verbose).await
+        // Skip DNS check if the input is a URL
+        let dns_result = if domain.is_some() && Url::parse(&input).is_err() {
+            dns::check_dns(domain.as_ref().unwrap(), verbose).await
         } else {
             Ok(())
         };
