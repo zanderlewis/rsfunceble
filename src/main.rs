@@ -4,10 +4,12 @@ extern crate tokio;
 extern crate trust_dns_resolver;
 extern crate whois_rust;
 extern crate url;
+extern crate futures;
+extern crate colored;
 
 mod http;
-mod dns;
 mod whois;
+mod whois_servers;
 
 use clap::Parser;
 use tokio::task;
@@ -16,6 +18,9 @@ use tokio::sync::Semaphore;
 use std::fs::{OpenOptions, remove_file};
 use std::io::Write;
 use url::Url;
+use colored::*;
+use std::collections::HashMap;
+use serde_json::Value;
 
 /// CLI Arguments definition using Clap
 #[derive(Parser)]
@@ -36,20 +41,27 @@ struct Args {
     #[arg(short, long, default_value_t = 10)]
     concurrency: usize,
 
-    /// Verbose output
-    #[arg(short, long)]
-    verbose: bool,
+    /// Verbose output level (1 or 2)
+    #[arg(short, long, default_value_t = 1)]
+    verbose_level: u8,
 
-    /// Perform DNS checks
+    /// Perform WHOIS checks
     #[arg(long)]
-    dns: bool,
+    whois: bool,
 }
 
 /// Main logic for checking a single domain or URL
-async fn check_domain_or_url(input: String, semaphore: Arc<Semaphore>, output_file: String, exclude: String, verbose: bool, dns_check: bool) -> Result<(), String> {
+async fn check_domain_or_url(
+    input: String, 
+    semaphore: Arc<Semaphore>, 
+    output_file: String, 
+    exclude: String, 
+    verbose_level: u8, 
+    whois_servers: Arc<HashMap<String, Value>>
+) -> Result<(), String> {
     let permit = semaphore.acquire().await.map_err(|e| e.to_string())?;
     
-    if verbose {
+    if verbose_level > 1 {
         println!("Checking: {}", input);
     }
 
@@ -59,29 +71,22 @@ async fn check_domain_or_url(input: String, semaphore: Arc<Semaphore>, output_fi
         format!("http://{}", input)
     };
 
-    let (http_success, redirected_to_www) = http::check_http(&url, verbose).await.unwrap_or((false, false));
+    let (http_success, redirected_to_www) = http::check_http(&url, verbose_level > 1).await.unwrap_or((false, false));
 
     let status = if http_success || redirected_to_www {
         "ACTIVE"
-    } else if dns_check {
+    } else {
         let domain = Url::parse(&url).ok().and_then(|parsed_url| parsed_url.host_str().map(|s| s.to_string()));
         if let Some(domain) = domain {
-            let dns_result = dns::check_dns(&domain, verbose).await;
-            if dns_result.is_ok() {
-                let whois_result = whois::check_whois(&domain, verbose).await;
-                if whois_result.is_ok() {
-                    "ACTIVE"
-                } else {
-                    "INACTIVE"
-                }
+            let whois_result = whois::check_whois(&domain, &whois_servers, verbose_level > 1).await;
+            if whois_result.is_ok() {
+                "ACTIVE"
             } else {
                 "INACTIVE"
             }
         } else {
             "INACTIVE"
         }
-    } else {
-        "INACTIVE"
     };
 
     if status != exclude {
@@ -90,8 +95,16 @@ async fn check_domain_or_url(input: String, semaphore: Arc<Semaphore>, output_fi
         writeln!(file, "{}", input).map_err(|e| e.to_string())?;
     }
 
-    if verbose {
-        println!("{}: {}", input, status);
+    if verbose_level > 0 {
+        let status_colored = match status {
+            "ACTIVE" => status.bold().green(),
+            "INACTIVE" => status.bold().red(),
+            _ => status.normal(),
+        };
+        println!("{}: {}", input, status_colored);
+    }
+
+    if verbose_level > 1 {
         println!("Finished checking: {}", input);
     }
     
@@ -129,23 +142,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Set concurrency limit
     let semaphore = Arc::new(Semaphore::new(args.concurrency));
     
+    // Load WHOIS servers once from a json string returned by the whois_servers module
+    let whois_servers = Arc::new(whois_servers::servers());
+    
     // Run checks concurrently
     let mut handles = vec![];
-    
+
     for input in inputs {
         let sem_clone = semaphore.clone();
         let output_file = args.output_file.clone();
         let exclude = args.exclude.clone();
-        let verbose = args.verbose;
-        let dns_check = args.dns;
+        let verbose_level = args.verbose_level;
+        let whois_servers_clone = whois_servers.clone();
         let handle = task::spawn(async move {
-            if let Err(e) = check_domain_or_url(input, sem_clone, output_file, exclude, verbose, dns_check).await {
+            if let Err(e) = check_domain_or_url(input, sem_clone, output_file, exclude, verbose_level, whois_servers_clone).await {
                 eprintln!("Error checking domain or URL: {}", e);
             }
         });
         handles.push(handle);
     }
-    
+
     // Await all tasks
     for handle in handles {
         if let Err(e) = handle.await {
@@ -153,7 +169,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    if args.verbose {
+    if args.verbose_level > 0 {
         println!("All tasks completed.");
     }
     Ok(())

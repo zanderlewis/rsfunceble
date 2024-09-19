@@ -2,10 +2,11 @@ use reqwest::Client;
 use std::time::Duration;
 
 // HTTP Error Codes that indicate the site exists
-const ACTIVE_CODES: [u16; 28] = [
+const ACTIVE_CODES: [u16; 29] = [
     200, 201, 202, 203, 204, 205, 206, // Successful responses
     300, 301, 302, 303, 304, 307, 308, // Redirection messages
     401, 403, 405, 406, 407, 408, 409, 410, // Client errors that may indicate the site exists
+    429, // Too Many Requests (might mean rate-limited but active)
     500, 501, 502, 503, 504, 505 // Server errors
 ];
 

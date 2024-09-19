@@ -14,5 +14,10 @@ Cargo.lock
 *.pdb
 
 # rsfunceble example output files
-*_ACTIVE.txt
-*_INACTIVE.txt
+*.txt
+!example.txt
+
+# XML/JSON files for WHOIS lookups
+*.xml
+*.json
+generate_json.py
