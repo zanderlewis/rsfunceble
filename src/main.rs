@@ -39,54 +39,55 @@ struct Args {
     /// Verbose output
     #[arg(short, long)]
     verbose: bool,
+
+    /// Perform DNS checks
+    #[arg(long)]
+    dns: bool,
 }
 
 /// Main logic for checking a single domain or URL
-async fn check_domain_or_url(input: String, semaphore: Arc<Semaphore>, output_file: String, exclude: String, verbose: bool) {
-    let permit = semaphore.acquire().await.unwrap();
+async fn check_domain_or_url(input: String, semaphore: Arc<Semaphore>, output_file: String, exclude: String, verbose: bool, dns_check: bool) -> Result<(), String> {
+    let permit = semaphore.acquire().await.map_err(|e| e.to_string())?;
     
     if verbose {
         println!("Checking: {}", input);
     }
 
-    let (url, domain) = if let Ok(parsed_url) = Url::parse(&input) {
-        (input.clone(), parsed_url.host_str().map(|s| s.to_string()))
+    let url = if input.starts_with("http://") || input.starts_with("https://") {
+        input.clone()
     } else {
-        (format!("http://{}", input), Some(input.clone()))
+        format!("http://{}", input)
     };
 
     let (http_success, redirected_to_www) = http::check_http(&url, verbose).await.unwrap_or((false, false));
 
     let status = if http_success || redirected_to_www {
         "ACTIVE"
-    } else {
-        // Skip DNS check if the input is a URL
-        let dns_result = if domain.is_some() && Url::parse(&input).is_err() {
-            dns::check_dns(domain.as_ref().unwrap(), verbose).await
-        } else {
-            Ok(())
-        };
-
-        if dns_result.is_ok() {
-            let whois_result = if let Some(domain) = &domain {
-                whois::check_whois(domain, verbose).await
-            } else {
-                Ok(())
-            };
-            if whois_result.is_ok() {
-                "ACTIVE"
+    } else if dns_check {
+        let domain = Url::parse(&url).ok().and_then(|parsed_url| parsed_url.host_str().map(|s| s.to_string()));
+        if let Some(domain) = domain {
+            let dns_result = dns::check_dns(&domain, verbose).await;
+            if dns_result.is_ok() {
+                let whois_result = whois::check_whois(&domain, verbose).await;
+                if whois_result.is_ok() {
+                    "ACTIVE"
+                } else {
+                    "INACTIVE"
+                }
             } else {
                 "INACTIVE"
             }
         } else {
             "INACTIVE"
         }
+    } else {
+        "INACTIVE"
     };
 
     if status != exclude {
         let file_path = format!("{}_{}.txt", output_file, status);
-        let mut file = OpenOptions::new().append(true).create(true).open(&file_path).unwrap();
-        writeln!(file, "{}", input).unwrap();
+        let mut file = OpenOptions::new().append(true).create(true).open(&file_path).map_err(|e| e.to_string())?;
+        writeln!(file, "{}", input).map_err(|e| e.to_string())?;
     }
 
     if verbose {
@@ -95,6 +96,7 @@ async fn check_domain_or_url(input: String, semaphore: Arc<Semaphore>, output_fi
     }
     
     drop(permit); // Release semaphore permit
+    Ok(())
 }
 
 /// Delete output files if they exist
@@ -135,8 +137,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let output_file = args.output_file.clone();
         let exclude = args.exclude.clone();
         let verbose = args.verbose;
+        let dns_check = args.dns;
         let handle = task::spawn(async move {
-            check_domain_or_url(input, sem_clone, output_file, exclude, verbose).await;
+            if let Err(e) = check_domain_or_url(input, sem_clone, output_file, exclude, verbose, dns_check).await {
+                eprintln!("Error checking domain or URL: {}", e);
+            }
         });
         handles.push(handle);
     }
