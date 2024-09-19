@@ -1,6 +1,6 @@
 [package]
 name = "rsfunceble"
-version = "0.0.5"
+version = "0.0.6"
 edition = "2021"
 authors = ["Zander Lewis <zander@zanderlewis.dev>"]
 description = "PyFunceble rewritten in Rust with concurrency and speed in mind."
