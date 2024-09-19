@@ -15,5 +15,10 @@ cargo install rsfunceble
 rsfunceble -h
 ```
 
+## Features
+- Ultra fast
+- Concurrency
+- Easy to use
+
 ## License
 rsfunceble is distributed under the [MIT](https://opensource.org/licenses/MIT) license.
