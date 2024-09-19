@@ -7,3 +7,12 @@ tristonpenn.com
 kwjhe3jqwek3lk3kkwlehjj.co
 example.ywh
 www.reddit.com/r/programming
+www.reddit.com/r/rust
+openai.com
+chatgpt.com
+rust-lang.org
+fortran-lang.org
+python.org
+tokio.rs
+crates.io
+zanderlewis.dev/hello

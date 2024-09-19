@@ -5,11 +5,12 @@ extern crate trust_dns_resolver;
 extern crate whois_rust;
 extern crate url;
 
+mod http;
+mod dns;
+mod whois;
+
 use clap::Parser;
-use reqwest::Client;
 use tokio::task;
-use trust_dns_resolver::TokioAsyncResolver;
-use whois_rust::{WhoIs, WhoIsLookupOptions};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 use std::fs::{OpenOptions, remove_file};
@@ -40,67 +41,6 @@ struct Args {
     verbose: bool,
 }
 
-/// Check DNS resolution
-async fn check_dns(domain: &str, verbose: bool) -> Result<(), String> {
-    let resolver = TokioAsyncResolver::tokio_from_system_conf().map_err(|e| e.to_string())?;
-    let result = resolver.lookup_ip(domain).await.map(|_| ()).map_err(|_| "DNS Lookup Failed".to_string());
-    if verbose {
-        match &result {
-            Ok(_) => println!("DNS Lookup for {} succeeded", domain),
-            Err(_) => println!("DNS Lookup for {} failed", domain),
-        }
-    }
-    result
-}
-
-/// Check HTTP Status with support for redirects
-async fn check_http(url: &str, verbose: bool) -> Result<(bool, bool), String> {
-    let client = Client::builder()
-        .redirect(reqwest::redirect::Policy::limited(10))
-        .build()
-        .map_err(|_| "HTTP Client Creation Failed".to_string())?;
-    
-    let response = client.get(url).send().await.map_err(|_| "HTTP Status Failed".to_string())?;
-    let final_url = response.url().clone();
-    let is_success = response.status().is_success();
-    let redirected_to_www = final_url.host_str().map_or(false, |host| host.starts_with("www."));
-    
-    if verbose {
-        if is_success {
-            println!("HTTP check for {} succeeded", url);
-        } else {
-            println!("HTTP check for {} failed", url);
-        }
-        if redirected_to_www {
-            println!("Redirected to www: {}", final_url);
-        }
-    }
-    
-    Ok((is_success, redirected_to_www))
-}
-
-/// WHOIS Lookup
-async fn check_whois(domain: &str, verbose: bool) -> Result<(), String> {
-    let whois_client = WhoIs::from_string(domain).map_err(|e| e.to_string())?;
-    let options = WhoIsLookupOptions::from_string(domain).map_err(|e| e.to_string())?;
-    let result = whois_client.lookup(options)
-        .map_err(|e| e.to_string())
-        .and_then(|result| {
-            if !result.is_empty() {
-                Ok(())
-            } else {
-                Err("WHOIS Lookup Failed".to_string())
-            }
-        });
-    if verbose {
-        match &result {
-            Ok(_) => println!("WHOIS Lookup for {} succeeded", domain),
-            Err(_) => println!("WHOIS Lookup for {} failed: {}", domain, result.as_ref().err().unwrap()),
-        }
-    }
-    result
-}
-
 /// Main logic for checking a single domain or URL
 async fn check_domain_or_url(input: String, semaphore: Arc<Semaphore>, output_file: String, exclude: String, verbose: bool) {
     let permit = semaphore.acquire().await.unwrap();
@@ -115,24 +55,28 @@ async fn check_domain_or_url(input: String, semaphore: Arc<Semaphore>, output_fi
         (format!("http://{}", input), Some(input.clone()))
     };
 
-    let dns_result = if let Some(domain) = &domain {
-        check_dns(domain, verbose).await
-    } else {
-        Ok(())
-    };
-
-    let (http_success, redirected_to_www) = check_http(&url, verbose).await.unwrap_or((false, false));
+    let (http_success, redirected_to_www) = http::check_http(&url, verbose).await.unwrap_or((false, false));
 
     let status = if http_success || redirected_to_www {
         "ACTIVE"
     } else {
-        let whois_result = if let Some(domain) = &domain {
-            check_whois(domain, verbose).await
+        let dns_result = if let Some(domain) = &domain {
+            dns::check_dns(domain, verbose).await
         } else {
             Ok(())
         };
-        if dns_result.is_ok() && whois_result.is_ok() {
-            "ACTIVE"
+
+        if dns_result.is_ok() {
+            let whois_result = if let Some(domain) = &domain {
+                whois::check_whois(domain, verbose).await
+            } else {
+                Ok(())
+            };
+            if whois_result.is_ok() {
+                "ACTIVE"
+            } else {
+                "INACTIVE"
+            }
         } else {
             "INACTIVE"
         }
