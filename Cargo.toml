@@ -12,7 +12,7 @@ keywords = ["funceble", "rsfunceble", "concurrency", "speed", "lookup"]
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.11", features = ["blocking", "json"] }
-trust-dns-resolver = "0.20"
+trust-dns-resolver = "0.23"
 whois-rust = "1.6.0"
 clap = { version = "4.0", features = ["derive"] }
 url = "2.5.2"
