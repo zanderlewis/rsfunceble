@@ -1,15 +1,10 @@
 extern crate clap;
 extern crate reqwest;
 extern crate tokio;
-extern crate trust_dns_resolver;
-extern crate whois_rust;
-extern crate url;
 extern crate futures;
 extern crate colored;
 
 mod http;
-mod whois;
-mod whois_servers;
 
 use clap::Parser;
 use tokio::task;
@@ -17,10 +12,7 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 use std::fs::{OpenOptions, remove_file};
 use std::io::Write;
-use url::Url;
 use colored::*;
-use std::collections::HashMap;
-use serde_json::Value;
 
 /// CLI Arguments definition using Clap
 #[derive(Parser)]
@@ -44,10 +36,6 @@ struct Args {
     /// Verbose output level (1 or 2)
     #[arg(short, long, default_value_t = 1)]
     verbose_level: u8,
-
-    /// Perform WHOIS checks
-    #[arg(long)]
-    whois: bool,
 }
 
 /// Main logic for checking a single domain or URL
@@ -56,8 +44,7 @@ async fn check_domain_or_url(
     semaphore: Arc<Semaphore>, 
     output_file: String, 
     exclude: String, 
-    verbose_level: u8, 
-    whois_servers: Arc<HashMap<String, Value>>
+    verbose_level: u8,
 ) -> Result<(), String> {
     let permit = semaphore.acquire().await.map_err(|e| e.to_string())?;
     
@@ -76,17 +63,7 @@ async fn check_domain_or_url(
     let status = if http_success || redirected_to_www {
         "ACTIVE"
     } else {
-        let domain = Url::parse(&url).ok().and_then(|parsed_url| parsed_url.host_str().map(|s| s.to_string()));
-        if let Some(domain) = domain {
-            let whois_result = whois::check_whois(&domain, &whois_servers, verbose_level > 1).await;
-            if whois_result.is_ok() {
-                "ACTIVE"
-            } else {
-                "INACTIVE"
-            }
-        } else {
-            "INACTIVE"
-        }
+        "INACTIVE"
     };
 
     if status != exclude {
@@ -142,9 +119,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Set concurrency limit
     let semaphore = Arc::new(Semaphore::new(args.concurrency));
     
-    // Load WHOIS servers once from a json string returned by the whois_servers module
-    let whois_servers = Arc::new(whois_servers::servers());
-    
     // Run checks concurrently
     let mut handles = vec![];
 
@@ -153,9 +127,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let output_file = args.output_file.clone();
         let exclude = args.exclude.clone();
         let verbose_level = args.verbose_level;
-        let whois_servers_clone = whois_servers.clone();
         let handle = task::spawn(async move {
-            if let Err(e) = check_domain_or_url(input, sem_clone, output_file, exclude, verbose_level, whois_servers_clone).await {
+            if let Err(e) = check_domain_or_url(input, sem_clone, output_file, exclude, verbose_level).await {
                 eprintln!("Error checking domain or URL: {}", e);
             }
         });

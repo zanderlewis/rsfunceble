@@ -16,8 +16,3 @@ Cargo.lock
 # rsfunceble example output files
 *.txt
 !example.txt
-
-# XML/JSON files for WHOIS lookups
-*.xml
-*.json
-generate_json.py

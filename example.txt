@@ -16,3 +16,7 @@ python.org
 tokio.rs
 crates.io
 zanderlewis.dev/hello
+zanderlewis.dev/blog/1
+zanderlewis.dev/blog/2
+astro.build
+astro.build/#

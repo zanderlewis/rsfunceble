@@ -20,7 +20,8 @@ const INACTIVE_CODES: [u16; 3] = [
 /// Check HTTP Status with support for redirects
 pub async fn check_http(url: &str, verbose: bool) -> Result<(bool, bool), String> {
     let client = Client::builder()
-        .timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(5)) // Lower timeout for faster failure
+        .pool_max_idle_per_host(100) // Reuse connections
         .redirect(reqwest::redirect::Policy::limited(10))
         .build()
         .map_err(|e| format!("HTTP Client Creation Failed: {}", e))?;
