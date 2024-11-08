@@ -1,18 +1,18 @@
 extern crate clap;
+extern crate colored;
+extern crate futures;
 extern crate reqwest;
 extern crate tokio;
-extern crate futures;
-extern crate colored;
 
 mod http;
 
 use clap::Parser;
-use tokio::task;
+use colored::*;
+use std::fs::{remove_file, OpenOptions};
+use std::io::Write;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
-use std::fs::{OpenOptions, remove_file};
-use std::io::Write;
-use colored::*;
+use tokio::task;
 
 /// CLI Arguments definition using Clap
 #[derive(Parser)]
@@ -28,7 +28,7 @@ struct Args {
     /// Excluded output files [ACTIVE, INACTIVE]
     #[arg(short, long, default_value = "")]
     exclude: String,
-    
+
     /// Number of concurrent tasks
     #[arg(short, long, default_value_t = 10)]
     concurrency: usize,
@@ -40,14 +40,14 @@ struct Args {
 
 /// Main logic for checking a single domain or URL
 async fn check_domain_or_url(
-    input: String, 
-    semaphore: Arc<Semaphore>, 
-    output_file: String, 
-    exclude: String, 
+    input: String,
+    semaphore: Arc<Semaphore>,
+    output_file: String,
+    exclude: String,
     verbose_level: u8,
 ) -> Result<(), String> {
     let permit = semaphore.acquire().await.map_err(|e| e.to_string())?;
-    
+
     if verbose_level > 1 {
         println!("Checking: {}", input);
     }
@@ -58,7 +58,9 @@ async fn check_domain_or_url(
         format!("http://{}", input)
     };
 
-    let (http_success, redirected_to_www) = http::check_http(&url, verbose_level > 1).await.unwrap_or((false, false));
+    let (http_success, redirected_to_www) = http::check_http(&url, verbose_level > 1)
+        .await
+        .unwrap_or((false, false));
 
     let status = if http_success || redirected_to_www {
         "ACTIVE"
@@ -68,7 +70,11 @@ async fn check_domain_or_url(
 
     if status != exclude {
         let file_path = format!("{}_{}.txt", output_file, status);
-        let mut file = OpenOptions::new().append(true).create(true).open(&file_path).map_err(|e| e.to_string())?;
+        let mut file = OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&file_path)
+            .map_err(|e| e.to_string())?;
         writeln!(file, "{}", input).map_err(|e| e.to_string())?;
     }
 
@@ -84,7 +90,7 @@ async fn check_domain_or_url(
     if verbose_level > 1 {
         println!("Finished checking: {}", input);
     }
-    
+
     drop(permit); // Release semaphore permit
     Ok(())
 }
@@ -111,14 +117,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Delete output files if they exist
     delete_output_files(&args.output_file);
-    
+
     // Read input file
     let contents = std::fs::read_to_string(args.input_file)?;
     let inputs: Vec<String> = contents.lines().map(|s| s.to_string()).collect();
-    
+
     // Set concurrency limit
     let semaphore = Arc::new(Semaphore::new(args.concurrency));
-    
+
     // Run checks concurrently
     let mut handles = vec![];
 
@@ -128,7 +134,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let exclude = args.exclude.clone();
         let verbose_level = args.verbose_level;
         let handle = task::spawn(async move {
-            if let Err(e) = check_domain_or_url(input, sem_clone, output_file, exclude, verbose_level).await {
+            if let Err(e) =
+                check_domain_or_url(input, sem_clone, output_file, exclude, verbose_level).await
+            {
                 eprintln!("Error checking domain or URL: {}", e);
             }
         });
