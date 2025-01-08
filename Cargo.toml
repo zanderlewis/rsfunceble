@@ -14,4 +14,4 @@ tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", features = ["blocking", "json"] }
 clap = { version = "4.0", features = ["derive"] }
 futures = "0.3"
-colored = "2.0"
+colored = "3.0"
